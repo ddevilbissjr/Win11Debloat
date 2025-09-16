@@ -51,9 +51,9 @@ param (
     [switch]$EnableEndTask,
     [switch]$EnableLastActiveClick,
     [switch]$ClearStart,
-    [string]$ReplaceStart,
+    [switch]$ReplaceStart,
     [switch]$ClearStartAllUsers,
-    [string]$ReplaceStartAllUsers,
+    [switch]$ReplaceStartAllUsers,
     [switch]$RevertContextMenu,
     [switch]$DisableMouseAcceleration,
     [switch]$DisableStickyKeys,
@@ -666,14 +666,22 @@ function RestartExplorer {
 # Credit: https://lazyadmin.nl/win-11/customize-windows-11-start-menu-layout/
 function ReplaceStartMenuForAllUsers {
     param (
-        $startMenuTemplate = "$PSScriptRoot/Assets/Start/start2.bin"
+        $startMenuBin = "$PSScriptRoot\start2.bin",
+		$startMenuDat = "$PSScriptRoot\settings.dat"
     )
 
     Write-Output "> Removing all pinned apps from the start menu for all users..."
+	Write-Output "> $startMenuBin | $startMenuDat"
 
     # Check if template bin file exists, return early if it doesn't
-    if (-not (Test-Path $startMenuTemplate)) {
+    if (-not (Test-Path $startMenuBin)) {
         Write-Host "Error: Unable to clear start menu, start2.bin file missing from script folder" -ForegroundColor Red
+        Write-Output ""
+        return
+    }
+
+	if (-not (Test-Path $startMenuDat)) {
+        Write-Host "Error: Unable to clear start menu, settings.dat file missing from script folder" -ForegroundColor Red
         Write-Output ""
         return
     }
@@ -681,23 +689,33 @@ function ReplaceStartMenuForAllUsers {
     # Get path to start menu file for all users
     $userPathString = GetUserDirectory -userName "*" -fileName "AppData\Local\Packages\Microsoft.Windows.StartMenuExperienceHost_cw5n1h2txyewy\LocalState"
     $usersStartMenuPaths = get-childitem -path $userPathString
+	
+	$userPathString2 = GetUserDirectory -userName "*" -fileName "AppData\Local\Packages\Microsoft.Windows.StartMenuExperienceHost_cw5n1h2txyewy\Settings"
+    $usersStartMenuPaths2 = get-childitem -path $userPathString2
 
     # Go through all users and replace the start menu file
     ForEach ($startMenuPath in $usersStartMenuPaths) {
-        ReplaceStartMenu $startMenuTemplate "$($startMenuPath.Fullname)\start2.bin"
+        ReplaceStartMenu $startMenuBin $startMenuDat "$($startMenuPath.Fullname)\start2.bin" "$($startMenuPath2.Fullname)\settings.dat"
     }
 
     # Also replace the start menu file for the default user profile
     $defaultStartMenuPath = GetUserDirectory -userName "Default" -fileName "AppData\Local\Packages\Microsoft.Windows.StartMenuExperienceHost_cw5n1h2txyewy\LocalState" -exitIfPathNotFound $false
+	$defaultStartMenuPath2 = GetUserDirectory -userName "Default" -fileName "AppData\Local\Packages\Microsoft.Windows.StartMenuExperienceHost_cw5n1h2txyewy\Settings" -exitIfPathNotFound $false
 
     # Create folder if it doesn't exist
     if (-not (Test-Path $defaultStartMenuPath)) {
         new-item $defaultStartMenuPath -ItemType Directory -Force | Out-Null
         Write-Output "Created LocalState folder for default user profile"
     }
+	
+	if (-not (Test-Path $defaultStartMenuPath2)) {
+        new-item $defaultStartMenuPath2 -ItemType Directory -Force | Out-Null
+        Write-Output "Created Settings folder for default user profile"
+    }
 
     # Copy template to default profile
-    Copy-Item -Path $startMenuTemplate -Destination $defaultStartMenuPath -Force
+    Copy-Item -Path $startMenuBin -Destination $defaultStartMenuPath -Force
+	Copy-Item -Path $startMenuDat -Destination $defaultStartMenuPath2 -Force
     Write-Output "Replaced start menu for the default user profile"
     Write-Output ""
 }
@@ -707,23 +725,36 @@ function ReplaceStartMenuForAllUsers {
 # Credit: https://lazyadmin.nl/win-11/customize-windows-11-start-menu-layout/
 function ReplaceStartMenu {
     param (
-        $startMenuTemplate = "$PSScriptRoot/Assets/Start/start2.bin",
-        $startMenuBinFile = "$env:LOCALAPPDATA\Packages\Microsoft.Windows.StartMenuExperienceHost_cw5n1h2txyewy\LocalState\start2.bin"
+        $startMenuBin = "$PSScriptRoot\start2.bin",
+		$startMenuDat = "$PSScriptRoot\settings.dat",
+        $startMenuBinFile = "$env:LOCALAPPDATA\Packages\Microsoft.Windows.StartMenuExperienceHost_cw5n1h2txyewy\LocalState\start2.bin",
+		$startMenuDatFile = "$env:LOCALAPPDATA\Packages\Microsoft.Windows.StartMenuExperienceHost_cw5n1h2txyewy\Settings\settings.dat"
     )
 
     # Change path to correct user if a user was specified
     if ($script:Params.ContainsKey("User")) {
         $startMenuBinFile = GetUserDirectory -userName "$(GetUserName)" -fileName "AppData\Local\Packages\Microsoft.Windows.StartMenuExperienceHost_cw5n1h2txyewy\LocalState\start2.bin"
+		$startMenuDatFile = GetUserDirectory -userName "$(GetUserName)" -fileName "AppData\Local\Packages\Microsoft.Windows.StartMenuExperienceHost_cw5n1h2txyewy\Settings\settings.dat"
     }
 
     # Check if template bin file exists, return early if it doesn't
-    if (-not (Test-Path $startMenuTemplate)) {
-        Write-Host "Error: Unable to replace start menu, template file not found" -ForegroundColor Red
+    if (-not (Test-Path $startMenuBin)) {
+        Write-Host "Error: Unable to replace start menu, start2.bin template file not found" -ForegroundColor Red
+        return
+    }
+	
+	if (-not (Test-Path $startMenuDat)) {
+        Write-Host "Error: Unable to replace start menu, settings.dat template file not found" -ForegroundColor Red
         return
     }
 
-    if ([IO.Path]::GetExtension($startMenuTemplate) -ne ".bin" ) {
+    if ([IO.Path]::GetExtension($startMenuBin) -ne ".bin" ) {
         Write-Host "Error: Unable to replace start menu, template file is not a valid .bin file" -ForegroundColor Red
+        return
+    }
+	
+	if ([IO.Path]::GetExtension($startMenuDat) -ne ".dat" ) {
+        Write-Host "Error: Unable to replace start menu, template file is not a valid .dat file" -ForegroundColor Red
         return
     }
 
@@ -736,12 +767,15 @@ function ReplaceStartMenu {
     }
 
     $backupBinFile = $startMenuBinFile + ".bak"
+	$backupDatFile = $startMenuDatFile + ".bak"
 
     # Backup current start menu file
     Move-Item -Path $startMenuBinFile -Destination $backupBinFile -Force
+	Move-Item -Path $startMenuDatFile -Destination $backupDatFile -Force
 
     # Copy template file
-    Copy-Item -Path $startMenuTemplate -Destination $startMenuBinFile -Force
+    Copy-Item -Path $startMenuBin -Destination $startMenuBinFile -Force
+	Copy-Item -Path $startMenuDat -Destination $startMenuDatFile -Force
 
     Write-Output "Replaced start menu for user $userName"
 }
@@ -806,7 +840,7 @@ function PrintFromFile {
     if ($printHeader) {
         Clear-Host
 
-        PrintHeader $title
+    PrintHeader $title
     }
 
     # Get & print script menu from file
@@ -1545,7 +1579,7 @@ if ((-not $script:Params.Count) -or $RunDefaults -or $RunDefaultsLite -or $RunSa
                 }
 
                 PrintFromFile "$PSScriptRoot/Assets/Menus/DefaultSettings" "Default Mode" $false
-        
+
                 Write-Output "Press enter to execute the script or press CTRL+C to quit..."
                 Read-Host | Out-Null
             }
@@ -1573,9 +1607,9 @@ if ((-not $script:Params.Count) -or $RunDefaults -or $RunDefaultsLite -or $RunSa
                 }
 
                 if ($script:ModernStandbySupported -and (-not $script:Params.ContainsKey('DisableModernStandbyNetworking'))) {
-                    $script:Params.Add('DisableModernStandbyNetworking', $true)
+                $script:Params.Add('DisableModernStandbyNetworking', $true)
                 }
-            } 
+            }
         }
 
         # Custom mode, show & add options based on user input
@@ -1816,7 +1850,7 @@ switch ($script:Params.Keys) {
     }
     'ReplaceStart' {
         Write-Output "> Replacing the start menu for user $(GetUserName)..."
-        ReplaceStartMenu $script:Params.Item("ReplaceStart")
+        ReplaceStartMenu
         Write-Output ""
         continue
     }
@@ -1825,7 +1859,7 @@ switch ($script:Params.Keys) {
         continue
     }
     'ReplaceStartAllUsers' {
-        ReplaceStartMenuForAllUsers $script:Params.Item("ReplaceStartAllUsers")
+        ReplaceStartMenuForAllUsers
         continue
     }
     'DisableStartRecommended' {
